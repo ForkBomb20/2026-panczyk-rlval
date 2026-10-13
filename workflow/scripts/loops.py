@@ -58,9 +58,8 @@ def train_rl(env_type, save_dir, env_kwargs, total_timesteps=int(2e6), n_envs=10
 
     # set up a vectorized environment to allow for parallel training
     vec_env = make_vec_env(
-        partial(make_undisturbed_env, env_type), 
-        n_envs=n_envs, 
-        env_kwargs=env_kwargs)
+        partial(make_undisturbed_env, env_type), n_envs=n_envs, env_kwargs=env_kwargs
+    )
     vec_env = VecMonitor(vec_env, filename=str(log_dir / "vec"))
 
     # initialize the model
@@ -73,7 +72,9 @@ def train_rl(env_type, save_dir, env_kwargs, total_timesteps=int(2e6), n_envs=10
     )
 
     # set up the evaluation environment
-    eval_env = Monitor(make_undisturbed_env(env_type, **env_kwargs), filename=str(log_dir / "eval"))
+    eval_env = Monitor(
+        make_undisturbed_env(env_type, **env_kwargs), filename=str(log_dir / "eval")
+    )
 
     # define the evaluation frequency per total timesteps (sum of timesteps across all parallel envs)
     eval_freq = min(
@@ -120,20 +121,23 @@ def rollout(model: sb3.PPO, env, disturbance_distribution, save_histories=False)
         action, _states = model.predict(obs, deterministic=True)
         # get disturbances for the step
         x = disturbance_distribution.sample(env.state, action)
-        obs, _, terminated, truncated, _ = env.step(
-            action=action,
-            disturbance = x
-        )
+        obs, _, terminated, truncated, _ = env.step(action=action, disturbance=x)
         done = terminated or truncated
 
     if save_histories:
         return env.render(save=True)
     else:
         return env.render(save=False)
-    
 
 
-def test_trained_rl(env_type, load_dir, save_dir, env_kwargs, disturbance_distribution, save_histories=False):
+def test_trained_rl(
+    env_type,
+    load_dir,
+    save_dir,
+    env_kwargs,
+    disturbance_distribution,
+    save_histories=False,
+):
     """Evaluate the most recent trained checkpoint and report control metrics.
 
     Loads the newest .zip checkpoint in `save_dir/models/`, runs it
@@ -156,7 +160,9 @@ def test_trained_rl(env_type, load_dir, save_dir, env_kwargs, disturbance_distri
     model = load_trained_model(load_dir)
 
     test_env = env_type(**env_kwargs, save_dir=save_dir)
-    history = rollout(model, test_env, disturbance_distribution, save_histories=save_histories)
+    history = rollout(
+        model, test_env, disturbance_distribution, save_histories=save_histories
+    )
 
     if save_histories:
         history_path = find_latest_file(save_dir, pattern="run_history*.csv")
@@ -168,6 +174,7 @@ def test_trained_rl(env_type, load_dir, save_dir, env_kwargs, disturbance_distri
             f"Mean Control Effort: {mean_control_effort}"
         )
     return history
+
 
 # def run(env, obs, disturbance_list, trained_load_dir="train_fivemillion"):
 #     model_folder = trained_load_dir / "models/"
@@ -182,17 +189,17 @@ def test_trained_rl(env_type, load_dir, save_dir, env_kwargs, disturbance_distri
 #             break
 #     return obs, np.array(states)
 
+
 def rollout_from_snapshot(env, model, snapshot, disturbance_distribution):
     """Runs a rollout of the model from a snapshot for MCTS.
 
     Args:
         env (holos multi environment): _description_
         model (sb3.PPO model object): loaded pre-trained model used on the entire rollout
-        snapshot (dict): snapshot of the environment state 
+        snapshot (dict): snapshot of the environment state
         disturbance_distribution (Disturbance object from fuzzing.py)
     Returns:
         tuple: actual power over rollout, desired power over rollout
-
     """
     observation = env.set_snapshot(snapshot)
     p_actual_list = []
