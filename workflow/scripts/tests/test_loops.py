@@ -15,6 +15,7 @@ import env
 from scipy.interpolate import interp1d
 from functools import partial
 from env import make_undisturbed_env
+import profiles
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +155,7 @@ def test_rollout_stops_on_truncated():
     assert mock_env.step.call_count == 1
     mock_env.render.assert_called_once()
 
+
 def test_rollout_applies_observation_noise(tmp_path):
     """Integration check: confirms rollout() -> env.step() -> _get_observation
     actually applies xo, by comparing observed p against true p at each step.
@@ -172,17 +174,20 @@ def test_rollout_applies_observation_noise(tmp_path):
     )
 
     seen = []
-    real_get_observation = partial(test_env._get_observation, reset=False)
-    def spy(xo):
-        obs = real_get_observation(xo)
-        seen.append((obs["p"][0], test_env._p))  # (observed, true) at this instant
+    real_get_observation = test_env._get_observation
+
+    def spy(xo, reset=False):
+        obs = real_get_observation(xo, reset=reset)
+        seen.append((obs["p"][0], test_env._p))
         return obs
+
     test_env._get_observation = spy
 
     loops.rollout(mock_model, test_env, disturbance_dist)
 
-    assert any(not np.isclose(obs_p, true_p) for obs_p, true_p in seen), \
-        "Expected observed p to differ from true p due to sensor noise"
+    assert any(
+        not np.isclose(obs_p, true_p) for obs_p, true_p in seen
+    ), "Expected observed p to differ from true p due to sensor noise"
 
 
 # ---------------------------------------------------------------------------
@@ -195,33 +200,39 @@ def test_test_trained_rl_orchestrates_load_run_and_metrics(tmp_path, env_kwargs)
     fake_history = pd.DataFrame({"time": [0, 1], "actual_power": [1.0, 1.0]})
     mock_disturbance_dist = MagicMock()
 
-    with patch("loops.find_latest_file") as mock_find_latest, patch(
-        "loops.sb3.PPO.load"
-    ) as mock_ppo_load, patch("loops.rollout") as mock_control_loop, patch(
+    with patch("loops.load_trained_model") as mock_load_model, patch(
+        "loops.find_latest_file"
+    ) as mock_find_latest, patch("loops.rollout") as mock_control_loop, patch(
         "loops.metrics", return_value=(0.1, 0.2, 0.3, 0.4)
     ) as mock_calc_metrics, patch(
         "loops.pd.read_csv", return_value=fake_history
     ) as mock_read_csv:
 
-        mock_find_latest.side_effect = [
-            tmp_path / "models" / "best_model.zip",
-            tmp_path / "run_history_001.csv",
-        ]
         mock_model = MagicMock()
-        mock_ppo_load.return_value = mock_model
+        mock_load_model.return_value = mock_model
+        mock_find_latest.return_value = tmp_path / "run_history_001.csv"
 
         result = loops.test_trained_rl(
-            DummyDictEnv, load_dir, save_dir, env_kwargs, mock_disturbance_dist, save_histories=True
+            DummyDictEnv,
+            load_dir,
+            save_dir,
+            env_kwargs,
+            mock_disturbance_dist,
+            save_histories=True,
         )
 
-        mock_find_latest.assert_has_calls([
-            call(tmp_path / "models", pattern="*.zip"),
-            call(tmp_path, pattern="run_history*.csv"),
-        ])
-        mock_ppo_load.assert_called_once_with(
-            tmp_path / "models" / "best_model.zip", device="cpu"
+        mock_load_model.assert_called_once_with(load_dir)
+        mock_control_loop.assert_called_once_with(
+            mock_model, ANY, mock_disturbance_dist, save_histories=True
         )
-        mock_control_loop.assert_called_once_with(mock_model, ANY, mock_disturbance_dist)
+        mock_find_latest.assert_called_once_with(tmp_path, pattern="run_history*.csv")
         mock_read_csv.assert_called_once_with(tmp_path / "run_history_001.csv")
         mock_calc_metrics.assert_called_once_with(fake_history)
         assert result is fake_history
+
+
+# ---------------------------------------------------------------------------
+# test_rollout_from_snapshot
+# ---------------------------------------------------------------------------
+
+## need to write tests here!!!!
