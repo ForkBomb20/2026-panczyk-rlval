@@ -176,6 +176,24 @@ def robustness(actual, desired, smoothness=0.0):
     return np.min(margins)
 
 
+# Claude Opus 4.6 — fixes x0 init crash when sigma_drum=0 (dim=1 but old code packed 9 values)
+def _sample_do_flat(do):
+    """Sample a flat array of do.dim values for active channels.
+
+    Args:
+        do (Do): observation disturbance distribution.
+
+    Returns:
+        numpy array: flat array of do.dim values.
+    """
+    parts = []
+    if do.power_dd.std() > 0:
+        parts.append([do.power_dd.rvs()])
+    if do.drum_dd.std() > 0:
+        parts.append(do.drum_dd.rvs(size=8))
+    return np.concatenate(parts) if parts else np.array([])
+
+
 PENALTY = 1e6
 
 
@@ -269,11 +287,12 @@ if __name__ == "__main__":
     for i in range(n_opt):
         x0 = np.zeros(vec_len)
         idx = 0
-        x0[idx:idx + dd.Do.dim] = np.concatenate([[dd.Do.power_dd.rvs()], dd.Do.drum_dd.rvs(size=8)])
-        idx += dd.Do.dim
+        do_dim = dd.Do.dim
+        x0[idx:idx + do_dim] = _sample_do_flat(dd.Do)
+        idx += do_dim
         for _ in range(depth):
-            x0[idx:idx + dd.Do.dim] = np.concatenate([[dd.Do.power_dd.rvs()], dd.Do.drum_dd.rvs(size=8)])
-            idx += dd.Do.dim
+            x0[idx:idx + do_dim] = _sample_do_flat(dd.Do)
+            idx += do_dim
 
         result = minimize(obj, x0, method='L-BFGS-B')
         reset_xo, dist_opt = extract(result.x, dd, depth)
