@@ -174,3 +174,52 @@ def robustness(actual, desired, smoothness=0.0):
     if smoothness > 0:
         return -smoothness * np.log(np.sum(np.exp(-margins / smoothness)))
     return np.min(margins)
+
+
+PENALTY = 1e6
+
+
+def likelihood_objective(x_vec, model, env, nominal_dist, smoothness=0.0):
+    """Two-phase objective for BFGS most-likely-failure search.
+
+    If the trajectory violates the spec, maximizes failure likelihood.
+    Otherwise, pushes toward the failure boundary via robustness.
+
+    Args:
+        x_vec (numpy array): flat optimization vector.
+        model: trained policy with .predict().
+        env: HolosMulti environment instance.
+        nominal_dist (NominalTrajectoryDistribution): for likelihood computation.
+        smoothness (float): robustness smoothing parameter.
+
+    Returns:
+        float: objective value for scipy.optimize.minimize.
+    """
+    reset_xo, disturbances = extract(x_vec, nominal_dist.D, nominal_dist.d)
+    try:
+        actual, desired = rollout_with_disturbances(model, env, reset_xo, disturbances)
+    except Exception:
+        return PENALTY
+
+    if not check_spec(actual, desired):
+        logp = nominal_dist.logpdf(disturbances)
+        return -logp / nominal_dist.d
+    else:
+        return robustness(actual, desired, smoothness)
+
+
+def make_objective(model, env, nominal_dist, smoothness=0.0):
+    """Curry likelihood_objective into f(x_vec) -> scalar for scipy.
+
+    Args:
+        model: trained policy.
+        env: HolosMulti environment instance.
+        nominal_dist (NominalTrajectoryDistribution): for likelihood computation.
+        smoothness (float): robustness smoothing parameter.
+
+    Returns:
+        callable: f(x_vec) -> float.
+    """
+    def objective(x_vec):
+        return likelihood_objective(x_vec, model, env, nominal_dist, smoothness)
+    return objective
