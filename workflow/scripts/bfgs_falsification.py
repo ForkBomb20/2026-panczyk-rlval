@@ -1,0 +1,152 @@
+"""BFGS most-likely-failure falsification for the HolosMulti environment."""
+
+import numpy as np
+from fuzzing import Disturbance
+
+
+class NominalTrajectoryDistribution:
+    """Bundles disturbance distribution and trajectory depth for likelihood computation.
+
+    Args:
+        D (DisturbanceDistribution): disturbance distribution for each timestep.
+        d (int): trajectory depth (number of env.step calls).
+    """
+
+    def __init__(self, D, d):
+        self.D = D
+        self.d = d
+
+    def logpdf(self, disturbances):
+        """Log-probability of a disturbance sequence under the nominal distribution.
+
+        Args:
+            disturbances (list[Disturbance]): one Disturbance per timestep.
+
+        Returns:
+            float: joint log-probability across all timesteps.
+        """
+        lp = 0.0
+        for x in disturbances:
+            if self.D.Do.dim > 0:
+                lp += self.D.Do.logpdf(x.xo)
+            if self.D.Da.dim > 0:
+                lp += self.D.Da.logpdf(x.xa)
+            if self.D.Ds.dim > 0:
+                lp += self.D.Ds.logpdf(x.xs)
+        return lp
+
+
+def _unpack_xo(values, do):
+    """Convert a flat array slice into an xo dict for the HolosMulti env.
+
+    Args:
+        values (numpy array): flat array of do.dim values.
+        do (Do): observation disturbance distribution.
+
+    Returns:
+        dict: keys "p" (float) and "drum_angles" (array of 8).
+    """
+    xo = {"p": 0.0, "drum_angles": np.zeros(8)}
+    idx = 0
+    if do.power_dd.std() > 0:
+        xo["p"] = values[idx]
+        idx += 1
+    if do.drum_dd.std() > 0:
+        xo["drum_angles"] = values[idx:idx + 8]
+    return xo
+
+
+def _unpack_xs(values, ds):
+    """Convert a flat array slice into a 12-element state disturbance array.
+
+    Args:
+        values (numpy array): flat array of ds.dim values.
+        ds (Ds): state disturbance distribution.
+
+    Returns:
+        numpy array: 12-element array in state ordering [n_r, c1-c6, Tf, Tm, Tc, xe, i].
+    """
+    xs = np.zeros(12)
+    idx = 0
+    if ds.nr_dd.std() > 0:
+        xs[0] = values[idx]; idx += 1
+    if ds.precursor_dd.std() > 0:
+        xs[1:7] = values[idx:idx + 6]; idx += 6
+    if ds.Tf_dd.std() > 0:
+        xs[7] = values[idx]; idx += 1
+    if ds.Tm_dd.std() > 0:
+        xs[8] = values[idx]; idx += 1
+    if ds.Tc_dd.std() > 0:
+        xs[9] = values[idx]; idx += 1
+    if ds.xe_dd.std() > 0:
+        xs[10] = values[idx]; idx += 1
+    if ds.i_dd.std() > 0:
+        xs[11] = values[idx]; idx += 1
+    return xs
+
+# Generate by Claude Opus 4.6
+def extract(x_vec, dd, depth):
+    """Unpack a flat optimization vector into reset xo and a disturbance sequence.
+
+    Args:
+        x_vec (numpy array): flat optimization vector.
+        dd (DisturbanceDistribution): defines active channels and their dimensions.
+        depth (int): number of env.step calls (len of disturbance list).
+
+    Returns:
+        tuple: (reset_xo dict, list[Disturbance] of length depth).
+    """
+    do_dim = dd.Do.dim
+    da_dim = dd.Da.dim
+    ds_dim = dd.Ds.dim
+
+    idx = 0
+    reset_xo = _unpack_xo(x_vec[idx:idx + do_dim], dd.Do) if do_dim > 0 else {"p": 0.0, "drum_angles": np.zeros(8)}
+    idx += do_dim
+
+    disturbances = []
+    for _ in range(depth):
+        xo = _unpack_xo(x_vec[idx:idx + do_dim], dd.Do) if do_dim > 0 else {"p": 0.0, "drum_angles": np.zeros(8)}
+        idx += do_dim
+
+        xa = x_vec[idx:idx + da_dim].copy() if da_dim > 0 else np.zeros(8)
+        idx += da_dim
+
+        xs = _unpack_xs(x_vec[idx:idx + ds_dim], dd.Ds) if ds_dim > 0 else np.zeros(12)
+        idx += ds_dim
+
+        disturbances.append(Disturbance(xo, xa, xs))
+
+    return reset_xo, disturbances
+
+# Generate by Claude Opus 4.6
+def check_spec(actual, desired):
+    """Check if power trajectory stays within 3% relative of desired.
+
+    Args:
+        actual (numpy array): actual power at each timestep.
+        desired (numpy array): desired power at each timestep.
+
+    Returns:
+        bool: True if spec satisfied at all timesteps.
+    """
+    return (np.abs(actual - desired) / desired < 0.03).all()
+
+# Generate by Claude Opus 4.6
+def robustness(actual, desired, smoothness=0.0):
+    """STL robustness for the 3% relative power spec.
+
+    Positive means satisfying, negative means violating.
+
+    Args:
+        actual (numpy array): actual power at each timestep.
+        desired (numpy array): desired power at each timestep.
+        smoothness (float): log-sum-exp smoothing parameter. 0 for exact min.
+
+    Returns:
+        float: robustness value.
+    """
+    margins = 0.03 - np.abs(actual - desired) / desired
+    if smoothness > 0:
+        return -smoothness * np.log(np.sum(np.exp(-margins / smoothness)))
+    return np.min(margins)
