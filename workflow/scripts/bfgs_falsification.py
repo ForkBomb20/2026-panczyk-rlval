@@ -223,3 +223,101 @@ def make_objective(model, env, nominal_dist, smoothness=0.0):
     def objective(x_vec):
         return likelihood_objective(x_vec, model, env, nominal_dist, smoothness)
     return objective
+
+
+if __name__ == "__main__":
+    from pathlib import Path
+    from scipy.optimize import minimize
+    import stable_baselines3 as sb3
+    import matplotlib.pyplot as plt
+    from env import HolosMulti
+    from profiles import get_profile
+    from fuzzing import DisturbanceDistribution, Do, Da, Ds
+    import loops
+
+    # --- Configuration ---
+    sigma_p = 0.005
+    sigma_drum = 0.005
+    n_opt = 20
+    n_rollouts = 300
+    smoothness = 0.1
+
+    # --- Load model and environment ---
+    model_path = Path("runs/train_fivemillion/models/best_model.zip")
+    model = sb3.PPO.load(model_path, device="cpu")
+    _, testing_kwargs = get_profile("test")
+    testing_kwargs["max_failed_drums"] = 0
+    env = HolosMulti(**testing_kwargs)
+    depth = env.episode_length - 1
+
+    # --- Set up disturbance distribution ---
+    dd = DisturbanceDistribution(
+        Do=Do(sigma_p=sigma_p, sigma_drum=sigma_drum),
+        Da=Da(sigma_dtheta=0),
+        Ds=Ds(),
+    )
+    nominal_dist = NominalTrajectoryDistribution(dd, depth)
+    obj = make_objective(model, env, nominal_dist, smoothness=smoothness)
+
+    # --- Optimization vector setup ---
+    vec_len = dd.Do.dim + depth * dd.dim
+    print(f"Optimization vector length: {vec_len} ({dd.Do.dim} reset + {depth} steps x {dd.dim} dims/step)")
+
+    # --- Multi-start L-BFGS-B ---
+    failure_actuals = []
+    failure_desireds = []
+    for i in range(n_opt):
+        x0 = np.zeros(vec_len)
+        idx = 0
+        x0[idx:idx + dd.Do.dim] = np.concatenate([[dd.Do.power_dd.rvs()], dd.Do.drum_dd.rvs(size=8)])
+        idx += dd.Do.dim
+        for _ in range(depth):
+            x0[idx:idx + dd.Do.dim] = np.concatenate([[dd.Do.power_dd.rvs()], dd.Do.drum_dd.rvs(size=8)])
+            idx += dd.Do.dim
+
+        result = minimize(obj, x0, method='L-BFGS-B')
+        reset_xo, dist_opt = extract(result.x, dd, depth)
+        actual, desired = rollout_with_disturbances(model, env, reset_xo, dist_opt)
+        is_failure = not check_spec(actual, desired)
+
+        print(f"[{i+1}/{n_opt}] converged={result.success}, failure={is_failure}, "
+              f"obj={result.fun:.4f}, max_dev={np.max(np.abs(actual - desired) / desired):.4f}")
+
+        if is_failure:
+            failure_actuals.append(actual)
+            failure_desireds.append(desired)
+
+    print(f"\nFound {len(failure_actuals)}/{n_opt} failures")
+
+    # --- Nominal Monte Carlo rollouts for comparison ---
+    nominal_actuals = []
+    nominal_desireds = []
+    for r in range(n_rollouts):
+        history = loops.test_trained_rl(
+            env_type=HolosMulti, load_dir=Path("runs/train_fivemillion"),
+            save_dir=Path("runs/train_fivemillion/bfgs_rollouts"),
+            env_kwargs=testing_kwargs, disturbance_distribution=dd, save_histories=False)
+        nominal_actuals.append(history["actual_power"].values)
+        nominal_desireds.append(history["desired_power"].values)
+
+    # --- Plot ---
+    fig, ax = plt.subplots(figsize=(12, 6))
+    timesteps = np.arange(len(nominal_actuals[0]))
+    for act, des in zip(nominal_actuals, nominal_desireds):
+        ax.plot(timesteps, act, color="steelblue", alpha=0.15, linewidth=0.8)
+    for act, des in zip(failure_actuals, failure_desireds):
+        ax.plot(np.arange(len(act)), act, color="red", alpha=0.7, linewidth=1.5)
+
+    desired_ref = nominal_desireds[0]
+    ax.plot(timesteps, desired_ref, color="black", linewidth=1.5, label="Desired power")
+    ax.plot(timesteps, desired_ref * 1.03, color="black", linestyle="--", linewidth=1, label="±3% spec")
+    ax.plot(timesteps, desired_ref * 0.97, color="black", linestyle="--", linewidth=1)
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Power fraction")
+    ax.set_title(f"BFGS Failures ({len(failure_actuals)}/{n_opt}) vs Nominal Rollouts "
+                 rf"($\sigma_p$={sigma_p}, $\sigma_d$={sigma_drum})")
+    ax.legend()
+    plt.tight_layout()
+    Path("results").mkdir(exist_ok=True)
+    plt.savefig("./results/bfgs_failures_holos.svg", dpi=300)
+    plt.show()
