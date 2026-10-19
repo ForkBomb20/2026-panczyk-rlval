@@ -27,6 +27,11 @@ class DisturbanceDistribution:
         self.Da = Da
         self.Ds = Ds
 
+    @property
+    def dim(self):
+        """Total active disturbance dimensions per timestep."""
+        return self.Do.dim + self.Da.dim + self.Ds.dim
+
     def sample(self, state, action):
         return Disturbance(self.Do.sample(state), self.Da.sample(action), self.Ds.sample(state, action))
 
@@ -37,6 +42,32 @@ class Do:
         # DO NOT disturb pnext (assume the controller reads the prescribed power correctly)
         self.power_dd = norm(0, sigma_p)
         self.drum_dd = norm(0, sigma_drum)
+
+    @property
+    def dim(self):
+        """Number of active disturbance dimensions (0, 1, 8, or 9)."""
+        d = 0
+        if self.power_dd.std() > 0:
+            d += 1
+        if self.drum_dd.std() > 0:
+            d += 8
+        return d
+
+    def logpdf(self, xo):
+        """Log-probability of an observation disturbance sample.
+
+        Args:
+            xo (dict): keys "p" (float) and "drum_angles" (array of 8).
+
+        Returns:
+            float: sum of log-probabilities across active channels.
+        """
+        lp = 0.0
+        if self.power_dd.std() > 0:
+            lp += self.power_dd.logpdf(xo["p"])
+        if self.drum_dd.std() > 0:
+            lp += np.sum(self.drum_dd.logpdf(xo["drum_angles"]))
+        return lp
 
     def sample(self, state=None):
         """Gets an observation disturbance (adds sensor noise) for a single step
@@ -58,6 +89,24 @@ class Da:
         # initialize the disturbance distributions for the action variables
         self.dtheta_dd = norm(0, sigma_dtheta)
 
+    @property
+    def dim(self):
+        """Number of active disturbance dimensions (0 or 8)."""
+        return 8 if self.dtheta_dd.std() > 0 else 0
+
+    def logpdf(self, xa):
+        """Log-probability of an action disturbance sample.
+
+        Args:
+            xa (numpy array): 8-element array of drum angle change disturbances.
+
+        Returns:
+            float: sum of log-probabilities across active channels.
+        """
+        if self.dtheta_dd.std() > 0:
+            return np.sum(self.dtheta_dd.logpdf(xa))
+        return 0.0
+
     def sample(self, observation=None):
         """Gets an action disturbance list for all drums for a single step
 
@@ -65,7 +114,7 @@ class Da:
             observation (dict, optional): Current observation. Defaults to None.
 
         Returns:
-            numpy array: 8 element array with disturbances for dtheta 
+            numpy array: 8 element array with disturbances for dtheta
         """
         return self.dtheta_dd.rvs(size=8)
 
@@ -97,6 +146,53 @@ class Ds:
         # Tc = self.Tc0  # coolant temp
         # xe = self.xe0  # xenon concentration
         # i = self.i0  # iodine concentration
+
+    @property
+    def dim(self):
+        """Number of active state disturbance dimensions (0 to 12)."""
+        d = 0
+        if self.nr_dd.std() > 0:
+            d += 1
+        if self.precursor_dd.std() > 0:
+            d += 6
+        if self.Tf_dd.std() > 0:
+            d += 1
+        if self.Tm_dd.std() > 0:
+            d += 1
+        if self.Tc_dd.std() > 0:
+            d += 1
+        if self.xe_dd.std() > 0:
+            d += 1
+        if self.i_dd.std() > 0:
+            d += 1
+        return d
+
+    def logpdf(self, xs):
+        """Log-probability of a state disturbance sample.
+
+        Args:
+            xs (numpy array): 12-element array matching state ordering
+                [n_r, c1-c6, Tf, Tm, Tc, xe, i].
+
+        Returns:
+            float: sum of log-probabilities across active channels.
+        """
+        lp = 0.0
+        if self.nr_dd.std() > 0:
+            lp += self.nr_dd.logpdf(xs[0])
+        if self.precursor_dd.std() > 0:
+            lp += np.sum(self.precursor_dd.logpdf(xs[1:7]))
+        if self.Tf_dd.std() > 0:
+            lp += self.Tf_dd.logpdf(xs[7])
+        if self.Tm_dd.std() > 0:
+            lp += self.Tm_dd.logpdf(xs[8])
+        if self.Tc_dd.std() > 0:
+            lp += self.Tc_dd.logpdf(xs[9])
+        if self.xe_dd.std() > 0:
+            lp += self.xe_dd.logpdf(xs[10])
+        if self.i_dd.std() > 0:
+            lp += self.i_dd.logpdf(xs[11])
+        return lp
 
     def sample(self, state=None, action=None, return_format="array"):
         """Samples disturbances for one step of state computation. 
