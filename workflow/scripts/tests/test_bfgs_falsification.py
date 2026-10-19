@@ -9,6 +9,7 @@ from fuzzing import Disturbance, DisturbanceDistribution, Do, Da, Ds
 from bfgs_falsification import (
     NominalTrajectoryDistribution,
     extract,
+    rollout_with_disturbances,
     check_spec,
     robustness,
 )
@@ -140,3 +141,43 @@ def test_robustness_smooth_approximates_exact():
     exact = robustness(actual, desired, smoothness=0.0)
     smooth = robustness(actual, desired, smoothness=0.001)
     assert smooth == pytest.approx(exact, abs=2e-3)
+
+
+# --- rollout_with_disturbances ---
+
+@pytest.fixture
+def model_and_env():
+    """Load trained model and create a test environment."""
+    try:
+        import stable_baselines3 as sb3
+        from env import HolosMulti
+        from profiles import get_profile
+    except ImportError as e:
+        pytest.skip(f"missing dependency: {e}")
+
+    from pathlib import Path
+    model_path = Path(__file__).resolve().parents[1] / "runs" / "train_fivemillion" / "models" / "best_model.zip"
+    if not model_path.exists():
+        pytest.skip("trained model not available")
+    model = sb3.PPO.load(model_path, device="cpu")
+    _, testing_kwargs = get_profile("test")
+    testing_kwargs["max_failed_drums"] = 0
+    env = HolosMulti(**testing_kwargs)
+    return model, env
+
+
+def test_rollout_deterministic(model_and_env):
+    """Same disturbances produce identical trajectories."""
+    model, env = model_and_env
+    dd = DisturbanceDistribution(Do=Do(0.005, 0.005), Da=Da(0), Ds=Ds())
+    depth = env.episode_length - 1
+
+    np.random.seed(42)
+    reset_xo = dd.Do.sample()
+    disturbances = [Disturbance(dd.Do.sample(), np.zeros(8), np.zeros(12)) for _ in range(depth)]
+
+    actual1, desired1 = rollout_with_disturbances(model, env, reset_xo, disturbances)
+    actual2, desired2 = rollout_with_disturbances(model, env, reset_xo, disturbances)
+
+    np.testing.assert_array_equal(actual1, actual2)
+    np.testing.assert_array_equal(desired1, desired2)
