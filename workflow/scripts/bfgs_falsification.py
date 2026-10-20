@@ -243,9 +243,70 @@ def make_objective(model, env, nominal_dist, smoothness=0.0):
     return objective
 
 
+# Claude Opus 4.6 — parallelized restarts across CPU cores to speed up optimization.
+# Each worker gets its own model/env to avoid shared-state issues.
+def _run_one_restart(args):
+    """Worker function for a single BFGS restart. Runs in its own process.
+
+    Args:
+        args (tuple): (restart_index, random_seed, config dict with scalar params).
+
+    Returns:
+        dict: result with 'failure', 'actual', 'desired', 'obj', 'converged', 'max_dev'.
+    """
+    i, seed, cfg = args
+    from scipy.optimize import minimize
+    import stable_baselines3 as sb3
+    from env import HolosMulti
+    from profiles import get_profile
+    from fuzzing import DisturbanceDistribution, Do, Da, Ds
+
+    np.random.seed(seed)
+    model = sb3.PPO.load(cfg["model_path"], device="cpu")
+    _, testing_kwargs = get_profile("test")
+    testing_kwargs["max_failed_drums"] = 0
+    env = HolosMulti(**testing_kwargs)
+    depth = env.episode_length - 1
+
+    dd = DisturbanceDistribution(
+        Do=Do(sigma_p=cfg["sigma_p"], sigma_drum=cfg["sigma_drum"]),
+        Da=Da(sigma_dtheta=0), Ds=Ds())
+    nominal_dist = NominalTrajectoryDistribution(dd, depth)
+    obj = make_objective(model, env, nominal_dist, smoothness=cfg["smoothness"])
+
+    vec_len = dd.Do.dim + depth * dd.dim
+    x0 = np.zeros(vec_len)
+    idx = 0
+    do_dim = dd.Do.dim
+    x0[idx:idx + do_dim] = _sample_do_flat(dd.Do)
+    idx += do_dim
+    for _ in range(depth):
+        x0[idx:idx + do_dim] = _sample_do_flat(dd.Do)
+        idx += do_dim
+
+    n_eval = [0]
+    def callback(xk):
+        n_eval[0] += 1
+        print(f"  [{i+1}] iteration {n_eval[0]}", flush=True)
+
+    result = minimize(obj, x0, method='L-BFGS-B',
+                      options={'maxiter': cfg["max_iter"]},
+                      callback=callback)
+    reset_xo, dist_opt = extract(result.x, dd, depth)
+    actual, desired = rollout_with_disturbances(model, env, reset_xo, dist_opt)
+    is_failure = not check_spec(actual, desired)
+    max_dev = float(np.max(np.abs(actual - desired) / desired))
+
+    print(f"[{i+1}/{cfg['n_opt']}] converged={result.success}, failure={is_failure}, "
+          f"obj={result.fun:.4f}, max_dev={max_dev:.4f}", flush=True)
+
+    return {"failure": is_failure, "actual": actual, "desired": desired,
+            "obj": float(result.fun), "converged": result.success, "max_dev": max_dev}
+
+
 if __name__ == "__main__":
     from pathlib import Path
-    from scipy.optimize import minimize
+    from multiprocessing import Pool
     import stable_baselines3 as sb3
     import matplotlib.pyplot as plt
     from env import HolosMulti
@@ -255,68 +316,44 @@ if __name__ == "__main__":
 
     # --- Configuration ---
     sigma_p = 0.005
-    sigma_drum = 0
-    n_opt = 3
-    n_rollouts = 50
+    sigma_drum = 0.005
+    n_opt = 20
+    n_rollouts = 300
     smoothness = 0.1
-    max_iter = 15
+    max_iter = 50
+    n_workers = 20  # number of parallel processes (set <= n_opt and <= available cores)
 
-    # --- Load model and environment ---
-    model_path = Path("runs/train_fivemillion/models/best_model.zip")
-    model = sb3.PPO.load(model_path, device="cpu")
-    _, testing_kwargs = get_profile("test")
-    testing_kwargs["max_failed_drums"] = 0
-    env = HolosMulti(**testing_kwargs)
-    depth = env.episode_length - 1
+    cfg = {
+        "sigma_p": sigma_p, "sigma_drum": sigma_drum,
+        "smoothness": smoothness, "max_iter": max_iter, "n_opt": n_opt,
+        "model_path": "runs/train_fivemillion/models/best_model.zip",
+    }
 
-    # --- Set up disturbance distribution ---
+    # --- Report optimization scale ---
     dd = DisturbanceDistribution(
         Do=Do(sigma_p=sigma_p, sigma_drum=sigma_drum),
-        Da=Da(sigma_dtheta=0),
-        Ds=Ds(),
-    )
-    nominal_dist = NominalTrajectoryDistribution(dd, depth)
-    obj = make_objective(model, env, nominal_dist, smoothness=smoothness)
-
-    # --- Optimization vector setup ---
+        Da=Da(sigma_dtheta=0), Ds=Ds())
+    _, testing_kwargs = get_profile("test")
+    testing_kwargs["max_failed_drums"] = 0
+    depth = 199
     vec_len = dd.Do.dim + depth * dd.dim
     print(f"Optimization vector length: {vec_len} ({dd.Do.dim} reset + {depth} steps x {dd.dim} dims/step)")
+    print(f"Running {n_opt} restarts across {n_workers} parallel workers")
 
-    # --- Multi-start L-BFGS-B ---
-    failure_actuals = []
-    failure_desireds = []
-    for i in range(n_opt):
-        x0 = np.zeros(vec_len)
-        idx = 0
-        do_dim = dd.Do.dim
-        x0[idx:idx + do_dim] = _sample_do_flat(dd.Do)
-        idx += do_dim
-        for _ in range(depth):
-            x0[idx:idx + do_dim] = _sample_do_flat(dd.Do)
-            idx += do_dim
+    # --- Parallel multi-start L-BFGS-B (Claude Opus 4.6 — parallelized for speed) ---
+    seeds = np.random.SeedSequence(42).spawn(n_opt)
+    worker_args = [(i, int(s.generate_state(1)[0]), cfg) for i, s in enumerate(seeds)]
 
-        n_eval = [0]
-        def callback(xk):
-            n_eval[0] += 1
-            print(f"  iteration {n_eval[0]}")
+    with Pool(n_workers) as pool:
+        results = pool.map(_run_one_restart, worker_args)
 
-        result = minimize(obj, x0, method='L-BFGS-B',
-                          options={'maxiter': max_iter, 'disp': True},
-                          callback=callback)
-        reset_xo, dist_opt = extract(result.x, dd, depth)
-        actual, desired = rollout_with_disturbances(model, env, reset_xo, dist_opt)
-        is_failure = not check_spec(actual, desired)
-
-        print(f"[{i+1}/{n_opt}] converged={result.success}, failure={is_failure}, "
-              f"obj={result.fun:.4f}, max_dev={np.max(np.abs(actual - desired) / desired):.4f}")
-
-        if is_failure:
-            failure_actuals.append(actual)
-            failure_desireds.append(desired)
-
+    failure_actuals = [r["actual"] for r in results if r["failure"]]
+    failure_desireds = [r["desired"] for r in results if r["failure"]]
     print(f"\nFound {len(failure_actuals)}/{n_opt} failures")
 
     # --- Nominal Monte Carlo rollouts for comparison ---
+    model = sb3.PPO.load(cfg["model_path"], device="cpu")
+    env = HolosMulti(**testing_kwargs)
     nominal_actuals = []
     nominal_desireds = []
     for r in range(n_rollouts):
