@@ -255,10 +255,11 @@ if __name__ == "__main__":
 
     # --- Configuration ---
     sigma_p = 0.005
-    sigma_drum = 0.005
-    n_opt = 20
-    n_rollouts = 300
+    sigma_drum = 0
+    n_opt = 3
+    n_rollouts = 50
     smoothness = 0.1
+    max_iter = 15
 
     # --- Load model and environment ---
     model_path = Path("runs/train_fivemillion/models/best_model.zip")
@@ -294,7 +295,14 @@ if __name__ == "__main__":
             x0[idx:idx + do_dim] = _sample_do_flat(dd.Do)
             idx += do_dim
 
-        result = minimize(obj, x0, method='L-BFGS-B')
+        n_eval = [0]
+        def callback(xk):
+            n_eval[0] += 1
+            print(f"  iteration {n_eval[0]}")
+
+        result = minimize(obj, x0, method='L-BFGS-B',
+                          options={'maxiter': max_iter, 'disp': True},
+                          callback=callback)
         reset_xo, dist_opt = extract(result.x, dd, depth)
         actual, desired = rollout_with_disturbances(model, env, reset_xo, dist_opt)
         is_failure = not check_spec(actual, desired)
