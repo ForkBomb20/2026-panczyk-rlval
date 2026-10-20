@@ -301,7 +301,8 @@ def _run_one_restart(args):
           f"obj={result.fun:.4f}, max_dev={max_dev:.4f}", flush=True)
 
     return {"failure": is_failure, "actual": actual, "desired": desired,
-            "obj": float(result.fun), "converged": result.success, "max_dev": max_dev}
+            "obj": float(result.fun), "converged": result.success, "max_dev": max_dev,
+            "x_vec": result.x, "seed": seed, "n_iterations": n_eval[0]}
 
 
 if __name__ == "__main__":
@@ -350,6 +351,20 @@ if __name__ == "__main__":
     failure_actuals = [r["actual"] for r in results if r["failure"]]
     failure_desireds = [r["desired"] for r in results if r["failure"]]
     print(f"\nFound {len(failure_actuals)}/{n_opt} failures")
+
+    # --- Save results (Claude Opus 4.6 — persist optimized disturbance vectors) ---
+    Path("results").mkdir(exist_ok=True)
+    import pickle
+    save_data = {
+        "config": cfg,
+        "results": results,
+        "vec_len": vec_len,
+        "depth": depth,
+    }
+    save_path = Path("results/bfgs_results.pkl")
+    with open(save_path, "wb") as f:
+        pickle.dump(save_data, f)
+    print(f"Results saved to {save_path}")
 
     # --- Nominal Monte Carlo rollouts for comparison ---
     model = sb3.PPO.load(cfg["model_path"], device="cpu")
