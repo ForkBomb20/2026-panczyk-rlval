@@ -4,17 +4,16 @@ from pathlib import Path
 import os
 
 
-def load_trained_model(load_dir="train_fivemillion"):
+def load_trained_model(model_name):
     """Loads a trained model
 
     Args:
-        load_dir (str): Name of folder where models dir is
+        model_name (str): Name of folder where model lives inside /models.
 
     Returns:
         sb3 model
     """
-    model_folder = "runs" / Path(load_dir) / "models/"
-    model_path = find_latest_file(model_folder, pattern="*.zip")
+    model_path = f"models/{model_name}/best_model.zip"
     model = sb3.PPO.load(model_path, device="cpu")
     return model
 
