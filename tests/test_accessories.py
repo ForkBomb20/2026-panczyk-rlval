@@ -3,7 +3,7 @@ import time
 import pytest
 import pandas as pd
 
-import accessories
+from veery import accessories
 
 
 def test_returns_only_matching_file(tmp_path):

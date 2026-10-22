@@ -23,10 +23,10 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import EvalCallback, CheckpointCallback
 from stable_baselines3.common.vec_env import VecMonitor
 from stable_baselines3.common.monitor import Monitor
-from accessories import find_latest_file, metrics
+from helpers import metrics, load_trained_model, find_latest_file
 from env import Undisturbed, make_undisturbed_env
 from functools import partial
-from accessories import check_spec, percent_diff, load_trained_model
+from veery.accessories import check_spec, percent_diff
 
 
 def train_rl(env_type, save_dir, env_kwargs, total_timesteps=int(2e6), n_envs=10):
@@ -104,8 +104,7 @@ def rollout(model: sb3.PPO, env, disturbance_distribution, save_histories=False)
     greedy action until the episode ends. `env.render()` is called
     once, after the loop — this assumes `render()` produces a
     post-hoc summary (e.g. a plot from accumulated history) rather
-    than a per-frame live view. If `env`'s render mode is
-    frame-based, move the render() call inside the loop.
+    than a per-frame live view.
 
     Args:
         model: Trained SB3 model with a `.predict()` method.
@@ -113,8 +112,6 @@ def rollout(model: sb3.PPO, env, disturbance_distribution, save_histories=False)
         disturbance_distribution (DisturbanceDistribution object from fuzzing.py): holds disturbance distributions for observations, actions, and states
         save_histories (bool, optional): decides whether to save histories from render as a csv. Defaults to True.
     """
-    # get disturbance (noise) for the first observation
-    xo0 = disturbance_distribution.Do.sample()
     obs, _ = env.reset()
     done = False
     while not done:
@@ -165,8 +162,6 @@ def test_trained_rl(
     )
 
     if save_histories:
-        history_path = find_latest_file(save_dir, pattern="run_history*.csv")
-        history = pd.read_csv(history_path)
         mae, cae, control_effort, mean_control_effort = metrics(history)
         print(
             f"{save_dir.name} - MAE: {mae}, CAE: {cae}, "
@@ -174,20 +169,6 @@ def test_trained_rl(
             f"Mean Control Effort: {mean_control_effort}"
         )
     return history
-
-
-# def run(env, obs, disturbance_list, trained_load_dir="train_fivemillion"):
-#     model_folder = trained_load_dir / "models/"
-#     model_path = find_latest_file(model_folder, pattern="*.zip")
-#     model = sb3.PPO.load(model_path, device="cpu")
-#     states = []
-#     for D in disturbance_list:
-#         action, _ = model.predict(obs, deterministic=True)
-#         obs, _, terminated, truncated = env.step(action, D)
-#         states.append(env.state.copy())
-#         if terminated or truncated:
-#             break
-#     return obs, np.array(states)
 
 
 def rollout_from_snapshot(env, model, snapshot, disturbance_distribution):

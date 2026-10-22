@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from accessories import percent_diff, robustness
+from veery.accessories import percent_diff, robustness
 
 
 def plot_power(history, save_dir=None):

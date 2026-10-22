@@ -1,4 +1,8 @@
-# 2026-panczyk-rlval
-Validation methods for a reinforcement learner trained to follow power profiles in the HolosQuad Microreactor. 
+# veery - a Validation Environment for Exposing RiskY models
 
-Includes methods and results for the 2027 ANS Math &amp; Computation Conference
+# Installation
+To run all capabilities, install dependencies via:
+
+```
+pip install -e ".[dev,experiments]"
+```

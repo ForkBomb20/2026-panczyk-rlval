@@ -4,10 +4,10 @@ import env
 import profiles
 from scipy.interpolate import interp1d
 import numpy as np
-import viz
+from veery import viz
 import loops
-import fuzzing
-from accessories import check_spec
+from veery import fuzzing
+from veery.accessories import check_spec
 from tqdm import tqdm
 
 
@@ -21,7 +21,7 @@ def run_demo():
 
     training_kwargs, testing_kwargs = profiles.get_profile("train")
     run_folder = profiles.multi_drum_training(
-        training_kwargs=training_kwargs, total_timesteps=50, n_envs=1, run_name="demo"
+        training_kwargs=training_kwargs, total_timesteps=50, n_envs=1
     )
     test_folder = run_folder / "demo"
     history = loops.test_trained_rl(
@@ -36,11 +36,12 @@ def run_demo():
     return
 
 
-def run_rollouts(test_profile, train_name, m, p_sig=0.01, psi=check_spec):
+def run_rollouts(test_profile, model_name, m, p_sig=0.01, psi=check_spec):
     """Runs m rollouts, save the trajectories and check spec compliance.
 
     Args:
-        rollout_fn (callable): no-arg function that runs one rollout and returns its history (pd.DataFrame)
+        test_profile (): from profiles
+        model_name (str): model name inside /models folder
         m (int): number of rollouts
         psi (callable): spec-check function taking a history DataFrame, returns bool
 
@@ -52,7 +53,6 @@ def run_rollouts(test_profile, train_name, m, p_sig=0.01, psi=check_spec):
         training_kwargs=training_kwargs,
         total_timesteps=int(5e6),
         n_envs=10,
-        run_name=train_name,
     )
     # if no test name is set up, default it to whatever the test profile is
     test_name = test_profile + f"_fuzzed_{p_sig}"
@@ -95,7 +95,7 @@ if __name__ == "__main__":
     colors = ["cyan", "magenta", "blue", "tomato"]
     for sig in sigmas:
         h, r = run_rollouts(
-            test_profile="test", train_name="train_fivemillion", m=50, p_sig=sig
+            test_profile="test", model_name="train_fivemillion", m=5, p_sig=sig
         )
         histories_list.append(h)
         results_list.append(r)
