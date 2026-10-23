@@ -308,9 +308,9 @@ class HolosMulti(gym.Env):
         """Converts the history list of lists into a dataframe."""
         run_history = np.array(self.history)
         column_names = [
-            "time",
-            "observed_power",
-            "desired_power",
+            "Time",
+            "Observed",  # observed power
+            "Desired",  # desired power
             "drum_1",
             "drum_2",
             "drum_3",
@@ -319,7 +319,7 @@ class HolosMulti(gym.Env):
             "drum_6",
             "drum_7",
             "drum_8",
-            "actual_power",
+            "Actual",  # actual power
             "c1",
             "c2",
             "c3",
@@ -333,7 +333,7 @@ class HolosMulti(gym.Env):
             "I",
         ]
         df = pd.DataFrame(run_history, columns=column_names)
-        df["diff"] = (df["actual_power"] - df["desired_power"]) * 100
+        df["diff"] = (df["Actual"] - df["Desired"]) * 100
 
         # this will likely cause overwrites with many rollouts that happen in less than 1 second
         timestr = time.strftime("%Y%m%d-%H%M%S")

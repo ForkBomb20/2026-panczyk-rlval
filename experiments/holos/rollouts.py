@@ -105,7 +105,7 @@ def run_rollouts(test_profile, model_name, run_name, m, p_sig=0.01, psi=check_sp
 
     viz.plot_rollouts(histories, results, save_dir=plots_folder)
     viz.plot_robustness(
-        history, p_threshold=0.03, time=None, ax=None, save_dir=plots_folder
+        history, threshold=0.03, time=None, ax=None, save_dir=plots_folder
     )
 
     return histories, results
@@ -136,7 +136,7 @@ def rollout_from_snapshot(env, model, snapshot, disturbance_distribution):
     return p_actual_list, p_desired_list
 
 
-def overlapping_rollouts():
+def overlapping_rollouts(test_profile, model_name, run_name):
     """THIS DOESN"T WORK YET!"""
     histories_list = []
     results_list = []
@@ -144,7 +144,11 @@ def overlapping_rollouts():
     colors = ["cyan", "magenta", "blue", "tomato"]
     for sig in sigmas:
         h, r = run_rollouts(
-            test_profile="test", model_name="train_fivemillion", m=5, p_sig=sig
+            test_profile=test_profile,
+            model_name=model_name,
+            run_name=run_name,
+            m=5,
+            p_sig=sig,
         )
         histories_list.append(h)
         results_list.append(r)
@@ -154,13 +158,15 @@ def overlapping_rollouts():
         results_list,
         sigmas,
         colors,
-        p_threshold=0.03,
-        save_dir="../../results/",
+        threshold=0.03,
+        save_as=f"results/{run_name}/figures/overlapping.png",
+        output_name="Fraction of Total Power, [-]",
     )
     return
 
 
 if __name__ == "__main__":
     run_rollouts(
-        test_profile="test", model_name="default", run_name="demo2", m=1, p_sig=0.01
+        test_profile="test", model_name="default", run_name="demo", m=1, p_sig=0.01
     )
+    overlapping_rollouts(test_profile="test", model_name="default", run_name="demo")

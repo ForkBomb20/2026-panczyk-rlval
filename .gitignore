@@ -221,3 +221,6 @@ __marimo__/
 /workflow/scripts/run_histories
 
 .vscode
+
+experiments/holos/models
+experiments/holos/results

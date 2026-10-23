@@ -39,8 +39,8 @@ def plot_rollouts(histories, results, save_dir=None):
     for history, passed in zip(histories, results):
         color = "green" if passed else "red"
         ax.plot(
-            history["time"],
-            history["actual_power"],
+            history["Time"],
+            history["Actual"],
             color=color,
             alpha=0.5,
             linewidth=0.8,
@@ -57,26 +57,37 @@ def plot_rollouts(histories, results, save_dir=None):
 
 
 def plot_overlapping_rollouts(
-    histories_list, results_list, sigmas, colors, p_threshold=0.03, save_dir=None
+    histories_list,
+    results_list,
+    sigmas,
+    colors,
+    threshold=0.03,
+    save_as=None,
+    output_name=None,
 ):
     """Plots power vs time for a set of rollouts, colored green (pass) or red (fail).
 
     Args:
-        histories (list[pd.DataFrame]): rollout histories, each with 'time' and 'actual_power'
-        results (np.ndarray[bool]): pass/fail per history, same order and length as histories
+        histories_list (list[pd.DataFrame]): list of dataframes containing rollout histories, each with 'Time' ,'Desired' and 'Actual'
+        results_list (np.ndarray[bool]): pass/fail per history, same order and length as histories
+        sigmas (list): standard deviations for the disturbance distribution
+        colors (list): list of matplotlib colors the same length as sigmas
+        threshold (float): percent error tolerance for any given timestep
+        save_as (str): file path with file name and extension to save the figure
+        output_name (str): the name of the output variable used in the spec calculation. Note: this is directly used for the y-axis label, format accordingly.
 
     Returns:
         matplotlib.figure.Figure
     """
     fig, ax = plt.subplots(figsize=(10, 6))
-    demo_history = histories_list[0][0]
-    desired = demo_history["desired_power"]
+    desired = histories_list[0][0]["Desired"]
+    time = histories_list[0][0]["Time"]
     # ax.plot(history["time"], desired, "k--", label="Prescribed Power Profile")
-    if p_threshold is not None:
+    if threshold is not None:
         ax.fill_between(
-            demo_history["time"],
-            desired * (1 - p_threshold),
-            desired * (1 + p_threshold),
+            time,
+            desired * (1 - threshold),
+            desired * (1 + threshold),
             color="green",
             alpha=0.15,
             label="Specification Region",
@@ -91,8 +102,8 @@ def plot_overlapping_rollouts(
             color = color
             if i == 0:
                 ax.plot(
-                    history["time"],
-                    history["actual_power"],
+                    history["Time"],
+                    history["Actual"],
                     color=color,
                     alpha=0.5,
                     linewidth=0.8,
@@ -100,24 +111,27 @@ def plot_overlapping_rollouts(
                 )
             else:
                 ax.plot(
-                    history["time"],
-                    history["actual_power"],
+                    history["Time"],
+                    history["Actual"],
                     color=color,
                     alpha=0.5,
                     linewidth=0.8,
                 )
 
     ax.set_xlabel("Time, [s]")
-    ax.set_ylabel("Fraction of Total Power, [-]")
+    if output_name is None:
+        ax.set_ylabel("Output Variable")
+    else:
+        ax.set_ylabel(output_name)
     ax.legend()
     fig.tight_layout()
-    if save_dir:
-        plt.savefig(f"{save_dir}/overlapping_rollouts.png", dpi=400)
+    if save_as:
+        plt.savefig(save_as, dpi=400)
 
     return fig
 
 
-def plot_tree(tree, profile=None, p_threshold=None, save_path=None):
+def plot_tree(tree, profile=None, threshold=None, save_path=None):
     fig, ax = plt.subplots(figsize=(10, 5))
     max_n = max(n.N for n in tree)
     for node in tree:
@@ -137,11 +151,11 @@ def plot_tree(tree, profile=None, p_threshold=None, save_path=None):
         ts = np.linspace(0, t_max, 200)
         desired = np.array([float(profile(t)) for t in ts])
         ax.plot(ts, desired, "k--", label="Prescribed Power Profile")
-        if p_threshold is not None:
+        if threshold is not None:
             ax.fill_between(
                 ts,
-                desired * (1 - p_threshold),
-                desired * (1 + p_threshold),
+                desired * (1 - threshold),
+                desired * (1 + threshold),
                 color="green",
                 alpha=0.15,
                 label="Specification Region",
@@ -213,41 +227,41 @@ def plot_tree_structure(tree, save_path=None):
     return fig, ax
 
 
-def plot_robustness(history, p_threshold=0.03, time=None, ax=None, save_dir=None):
+def plot_robustness(history, threshold=0.03, time=None, ax=None, save_dir=None):
     """Plot absolute percent power deviation for one rollout with spec bound and rho arrow."""
     if ax is None:
         _, ax = plt.subplots(figsize=(8, 4))
     t = history.index if time is None else time
 
     rho_gen = robustness(
-        p_actual=history["actual_power"],
-        p_desired=history["desired_power"],
-        p_threshold=p_threshold,
+        p_actual=history["Actual"],
+        p_desired=history["Desired"],
+        threshold=threshold,
     )
 
-    pct_dev = percent_diff(history["actual_power"], history["desired_power"])
+    pct_dev = percent_diff(history["Actual"], history["Desired"])
 
     # robustness: smallest margin to the spec (unclipped, so violations show as negative)
-    margins = p_threshold - pct_dev
+    margins = threshold - pct_dev
     i = np.argmin(margins)
     rho = margins[i]
 
     print(f"rho from robustness calc: {rho_gen}, rho from built-in: {rho}")
 
     ax.plot(t, pct_dev)
-    ax.axhline(p_threshold, color="r", linestyle="-")
-    ymax = max(p_threshold * 1.5, pct_dev.max() * 1.1)
-    ax.axhspan(p_threshold, ymax, color="r", alpha=0.2)
+    ax.axhline(threshold, color="r", linestyle="-")
+    ymax = max(threshold * 1.5, pct_dev.max() * 1.1)
+    ax.axhspan(threshold, ymax, color="r", alpha=0.2)
     ax.set_ylim(top=ymax)
 
     # arrow from spec line to the worst-case point
     ax.annotate(
         "",
         xy=(t[i], pct_dev[i]),
-        xytext=(t[i], p_threshold),
+        xytext=(t[i], threshold),
         arrowprops=dict(arrowstyle="->", color="k", lw=1.5, shrinkA=0, shrinkB=0),
     )
-    ax.text(t[i], (p_threshold + pct_dev[i]) / 2, r"$\rho$ ", ha="right", va="center")
+    ax.text(t[i], (threshold + pct_dev[i]) / 2, r"$\rho$ ", ha="right", va="center")
 
     ax.set_xlabel("Time, [s]")
     ax.set_ylabel("Fractional Power Deviation, [-]")

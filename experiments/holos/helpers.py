@@ -117,25 +117,3 @@ def episode_length_within_max_time(profile, episode_length, dt):
         return False
     else:
         return True
-
-
-def find_latest_file(folder_path, pattern="*"):
-    """Gets the latest file in a path, specifically for grabbing the best trained RL model.
-
-    Args:
-        folder_path (Path): path to folder of interest
-        pattern (str, optional): string pattern of file names to search for. Defaults to '*'.
-
-    Returns:
-        file: file of interest
-    """
-    try:
-        latest_file = sorted(
-            folder_path.glob(pattern), key=os.path.getmtime, reverse=True
-        )[0]
-        return latest_file
-    except IndexError:
-        raise FileNotFoundError(
-            f"No files matching '{pattern}' in '{folder_path}'. "
-            "Please ensure models and their associated files have been generated first."
-        )
